@@ -33,11 +33,13 @@ For every row: **+ New → GitHub Repo → lindahmed/marketmind**, rename the se
 | Service | Root | Start Command | Healthcheck | Restart |
 |---|---|---|---|---|
 | migration | `/backend` | `python -m app.migrate` | none | Never |
-| backend | `/backend` | `sh -c 'exec uvicorn app.main:app --host :: --port $PORT --no-access-log --no-proxy-headers'` | `/health`, 120 seconds | On Failure, 10 retries |
+| backend | `/backend` | `sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --no-proxy-headers'` | `/health`, 120 seconds | On Failure, 10 retries |
 | worker | `/backend` | `python -m app.worker` | `/health`, 120 seconds | On Failure, 10 retries |
 | frontend | `/frontend` | `node server.js` | `/health`, 120 seconds | On Failure, 10 retries |
 
 The migration service is a short-lived release job that exits with code 0 on success. Only it receives administrator credentials. It runs Alembic under an advisory lock and provisions restricted `marketmind_api` / `marketmind_worker` roles. Do not put migrations or administrator URLs in API/worker startup or their pre-deploy commands.
+
+For `migration`, disable automatic deployments under **Settings → Source** so each schema release is started manually. Bind Uvicorn to `0.0.0.0`: its `::` CLI binding is IPv6-only and fails Railway's IPv4 health check/public edge. The current Railway private network provides IPv4 as well. [Railway binding requirements](https://docs.railway.com/networking/troubleshooting/application-failed-to-respond)
 
 ## 4. Variables and HTTPS domains
 

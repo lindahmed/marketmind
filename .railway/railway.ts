@@ -30,7 +30,7 @@ export default defineRailway(() => {
   });
   const backend = service("backend", {
     source: backendSource, build, deploy, replicas: { [region]: 1 },
-    start: "sh -c 'exec uvicorn app.main:app --host :: --port $PORT --no-access-log --no-proxy-headers'",
+    start: "sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --no-proxy-headers'",
     healthcheck: "/health", healthcheckTimeout: 120,
     env: {
       ENVIRONMENT: "production", SERVICE_ROLE: "api", PORT: "8000", COOKIE_SECURE: "true",
