@@ -2,7 +2,7 @@
 
 A multi-tenant marketing intelligence platform for small businesses. The current implementation includes private workspaces, authentication, industry packs, financial CSV reporting, private knowledge, optional provider-backed investigations, and approval-gated n8n Cloud simulations.
 
-**V1 is frozen for local simulation demonstrations.** Both industry browser/API journeys passed; actual cloud/provider delivery and production database/worker guarantees remain unverified. See [V1 release checklist](V1_RELEASE_CHECKLIST.md) and [fictional demonstration steps](docs/V1_DEMO.md).
+**V1 product behavior is frozen.** Deployment preparation adds a secure same-origin API proxy, PostgreSQL tenant policies and an independent worker. Start with fictional data; live cloud/provider delivery and restore checks remain required. See [Railway deployment steps](RAILWAY_DEPLOYMENT.md), [verification](docs/RAILWAY_VERIFICATION.md) and [fictional demonstrations](docs/V1_DEMO.md).
 
 ## Run with Docker
 
@@ -39,7 +39,7 @@ npm ci
 npm run dev
 ```
 
-The browser defaults to `http://localhost:8000`; set `NEXT_PUBLIC_API_URL` in `frontend/.env.local` to change it. Use `localhost` consistently for both services so cookies work. Backend settings load the root `.env` when run from `backend/`.
+The browser defaults to same-origin `/api/...`; the Next.js server forwards to `http://127.0.0.1:8000` locally. Set server-only `BACKEND_API_URL` in `frontend/.env.local` if needed. Existing local direct-API setups can still set `NEXT_PUBLIC_API_URL`; production requires it to be empty. Backend settings load the root `.env` from `backend/` in development and injected variables only in production.
 
 Without Docker, a **local SQLite preview** supports accounts, profiles, and CSV analytics, but does not support pgvector retrieval:
 
@@ -107,4 +107,4 @@ See [local verification results](docs/VERIFICATION.md) for completed checks and 
 
 ## Security and deployment
 
-Argon2 password hashes, expiring signed sessions in HttpOnly/SameSite cookies, explicit browser Origin checks, and server-verified memberships protect the foundation. Local Compose binds services to loopback. Configure HTTPS, `COOKIE_SECURE=true`, exact `ALLOWED_ORIGINS`, strong secrets, and a restricted runtime database role before deployment. Authentication rate limits, email verification/password recovery, revocable sessions, audit trails, and PostgreSQL RLS are tracked in the roadmap. The current deployment is intended for local development.
+Argon2 hashes, expiring HttpOnly/SameSite sessions, production Secure cookies, exact browser Origin checks and verified memberships protect access. PostgreSQL policies add tenant boundaries; production uses separate restricted API/worker logins, with administrator credentials held only by the migration job. Authentication counters are shared across API replicas. Local Compose binds public ports to loopback. Follow [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for public HTTPS deployment and the remaining release gates. Session revocation, email verification/password recovery and stronger edge abuse controls remain limits to review before customer onboarding.

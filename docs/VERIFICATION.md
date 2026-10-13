@@ -1,5 +1,7 @@
 # Implementation verification — 2026-10-13
 
+Historical V1 demonstration checks below predate Railway preparation. The later [Railway verification](RAILWAY_VERIFICATION.md) supersedes the RLS, worker-lease and PostgreSQL verification blockers below; live cloud/container/restore gates still apply.
+
 ## Verified in this workspace
 
 - Backend suite: **155 passed, 2 skipped**. Coverage includes source corrections and deletion tombstones, idempotent and competing conflict decisions, stale conflict matches, tenant authorization, appointment lifecycle dates, partial payments, explicit zero-activity coverage, unresolved/conflicting source completeness, concurrent source updates, and six complete fictional industry/outcome journeys.

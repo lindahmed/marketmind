@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: pgvector/pgvector:0.8.7-pg17
         env:
           POSTGRES_USER: marketmind
           POSTGRES_PASSWORD: ci-only-password
@@ -37,6 +37,9 @@ jobs:
       - run: pytest -q
         env:
           TEST_DATABASE_URL: postgresql+psycopg://marketmind:ci-only-password@localhost:5432/marketmind_test
+          TEST_MIGRATION_DATABASE_URL: postgresql+psycopg://marketmind:ci-only-password@localhost:5432/marketmind_test
+          TEST_DEPLOYMENT_DATABASE_URL: postgresql+psycopg://marketmind:ci-only-password@localhost:5432/marketmind_test
+      - run: docker build -t marketmind-backend .
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -52,3 +55,20 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+        env:
+          DEPLOYMENT_ENVIRONMENT: production
+      - run: docker build -t marketmind-frontend .
+  deployment-config:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .railway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .railway/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck

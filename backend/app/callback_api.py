@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth import Db
 from app.config import get_settings
+from app.db import set_db_scope
 from app.intelligence.audit import record_audit
 from app.intelligence.experiment_state import transition_dispatch, transition_experiment
 from app.models import (Experiment, ExperimentApproval, ExperimentDesign, ExperimentEvaluation,
@@ -62,8 +63,11 @@ def simulation_callback(payload: N8nSimulationCallback, db: Db,
     if not secret:
         raise HTTPException(503, "n8n callback authentication is not configured")
     expected = f"Bearer {secret}"
-    if authorization is None or not hmac.compare_digest(authorization, expected):
+    if authorization is None or not hmac.compare_digest(authorization.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(401, "Callback authentication failed")
+    # The server credential authorizes this lookup; the joins below still bind
+    # the claimed tenant to the persisted approval/version/execution.
+    set_db_scope(db, workspace_id=payload.workspace_id)
 
     payload_hash, payload_data = _payload_hash(payload)
     # The callback's claims are checked against all persisted relationships; IDs
@@ -92,6 +96,7 @@ def simulation_callback(payload: N8nSimulationCallback, db: Db,
 
     prior_callback = db.scalar(select(N8nCallbackReceipt).where(
         N8nCallbackReceipt.callback_id == payload.callback_id,
+        N8nCallbackReceipt.workspace_id == payload.workspace_id,
     ))
     if prior_callback:
         if (prior_callback.workspace_id != payload.workspace_id or prior_callback.dispatch_id != dispatch.id

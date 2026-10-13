@@ -3,3 +3,6 @@ __pycache__
 .pytest_cache
 .env
 *.db
+.tmp
+.ruff_cache
+tests

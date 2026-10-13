@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import get_db
+from app.db import get_db, set_db_scope
 from app.models import Membership, User, Workspace
 
 password_hasher = PasswordHash.recommended()
@@ -31,6 +31,7 @@ def current_user(db: Db, marketmind_session: Annotated[str | None, Cookie()] = N
     try:
         claims = jwt.decode(marketmind_session, get_settings().jwt_secret, algorithms=["HS256"],
                             issuer="marketmind", audience="marketmind-web", options={"require": ["sub", "exp", "iat"]})
+        set_db_scope(db, user_id=claims["sub"])
         user = db.get(User, claims["sub"])
     except (jwt.PyJWTError, TypeError):
         raise HTTPException(401, "Session expired or invalid") from None
@@ -50,6 +51,7 @@ def current_workspace(db: Db, user: CurrentUser,
     workspace = db.scalars(query.order_by(Workspace.id)).first()
     if workspace is None:
         raise HTTPException(403, "Workspace access denied")
+    set_db_scope(db, workspace_id=workspace.id)
     return workspace
 
 
@@ -59,5 +61,14 @@ Tenant = Annotated[Workspace, Depends(current_workspace)]
 def enforce_origin(request: Request) -> None:
     # SameSite cookies plus explicit Origin checking protect browser writes.
     origin = request.headers.get("origin")
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and origin and origin not in get_settings().allowed_origins:
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    settings = get_settings()
+    if origin and origin not in settings.allowed_origins:
         raise HTTPException(403, "Origin not allowed")
+    # These existing server-to-server routes authenticate with a bearer secret.
+    server_callback = (request.url.path == "/api/integrations/n8n/simulation-callback"
+                       or (request.url.path.startswith("/api/integrations/google-sheets/")
+                           and request.url.path.endswith("/ingest")))
+    if settings.environment == "production" and not origin and not server_callback:
+        raise HTTPException(403, "Origin required")

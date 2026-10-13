@@ -1,14 +1,16 @@
 import hashlib
 import hmac
 
-from fastapi import APIRouter, HTTPException, Response, UploadFile
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import uuid
 
 from app.analytics import MAX_UPLOAD_BYTES, dashboard, parse_csv
 from app.auth import CurrentUser, DUMMY_HASH, Db, Tenant, password_hasher, set_session
+from app.auth_limits import limit_auth
 from app.intelligence.context import verified_business_context
 from app.intelligence.audit import record_audit
 from app.intelligence.documents import save_document, search_documents
@@ -18,6 +20,7 @@ from app.intelligence.experiment_state import transition_dispatch, transition_ex
 from app.intelligence.investigation import InvestigationAgent, InvestigationError
 from app.integrations.n8n import DatabaseApprovalVerifier, DispatchOutcome, N8nExecutor
 from app.config import get_settings
+from app.db import set_db_scope
 from app.industries import PACKS
 from app.models import (DailyMetric, Experiment, ExperimentApproval, InvestigationRun, KnowledgeChunk,
                         KnowledgeDocument, Membership, N8nDispatch, User, Workspace)
@@ -96,11 +99,13 @@ def dispatch_view(dispatch: N8nDispatch, approval_id: str) -> dict:
 
 
 @router.post("/auth/register", status_code=201)
-def register(payload: Register, response: Response, db: Db):
-    user = User(email=payload.email, password_hash=password_hasher.hash(payload.password))
-    workspace = Workspace(name=payload.business_name.strip(), industry=payload.industry)
+def register(payload: Register, request: Request, response: Response, db: Db):
+    limit_auth(db, request, payload.email, registration=True)
+    user = User(id=str(uuid.uuid4()), email=payload.email, password_hash=password_hasher.hash(payload.password))
+    workspace = Workspace(id=str(uuid.uuid4()), name=payload.business_name.strip(), industry=payload.industry)
     if len(workspace.name) < 2:
         raise HTTPException(422, "Business name must have at least two characters")
+    set_db_scope(db, workspace_id=workspace.id, user_id=user.id)
     db.add_all([user, workspace])
     try:
         db.flush()
@@ -114,7 +119,8 @@ def register(payload: Register, response: Response, db: Db):
 
 
 @router.post("/auth/login")
-def login(payload: Login, response: Response, db: Db):
+def login(payload: Login, request: Request, response: Response, db: Db):
+    limit_auth(db, request, payload.email, registration=False)
     user = db.scalar(select(User).where(User.email == payload.email))
     verified = password_hasher.verify(payload.password, user.password_hash if user else DUMMY_HASH)
     if user is None or not verified:
@@ -125,7 +131,8 @@ def login(payload: Login, response: Response, db: Db):
 
 @router.post("/auth/logout", status_code=204)
 def logout(response: Response):
-    response.delete_cookie("marketmind_session", path="/")
+    response.delete_cookie("marketmind_session", path="/", httponly=True,
+                           secure=get_settings().cookie_secure, samesite="lax")
 
 
 @router.get("/auth/me")

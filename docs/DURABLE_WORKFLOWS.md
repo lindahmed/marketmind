@@ -1,6 +1,6 @@
 # Durable workflow jobs
 
-MarketMind stores long-running work in the application database; no broker or separate worker service is required. Migration `0009_durable_workflows` adds the job, checkpoint, and checkpoint-write tables. The FastAPI lifespan starts a polling worker that claims queued work with a lease. Migration `0010_fixed_cost_reporting` adds fixed-cost coverage to daily financial records.
+MarketMind stores long-running work in the application database. Production runs `python -m app.worker` as a separate service with a restricted PostgreSQL login; `WORKFLOW_WORKER_ENABLED=false` disables the FastAPI lifespan worker. An optional inline worker remains available for local development. Migration `0009_durable_workflows` adds jobs/checkpoints; production revision `0014` adds tenant policies.
 
 ## Supported jobs
 
@@ -16,12 +16,12 @@ Jobs persist `queued`, `running`, `completed`, `failed`, and `cancelled` states,
 
 LangGraph checkpoints and pending writes are stored in tenant- and job-scoped tables. Checkpoint reads and writes require the job ID to belong to the supplied workspace. The job graph state is JSON-only: ORM instances, agent clients, and secrets are not serialized. Checkpoints inherit the database's access controls and at-rest protection; this feature does not add separate application-level encryption.
 
-After a FastAPI restart, queued jobs are picked up from the database. A lease that expired before the graph started can be retried once. When the saved domain result exists but the job status update was interrupted, recovery marks the job complete without rerunning the agent. A crash during an in-flight AI step is marked failed rather than automatically replayed, because the provider may already have processed the request. There is no manual retry endpoint yet. Cancellation is immediate while queued and cooperative while running; the worker checks it before persisting new results.
+After a worker restart, queued jobs are picked up from the database. A lease that expired before the graph started can be retried once. When the saved domain result exists but the job status update was interrupted, recovery marks the job complete without rerunning the agent. A crash during an in-flight AI step is marked failed rather than automatically replayed, because the provider may already have processed the request. There is no manual retry endpoint yet. Cancellation is immediate while queued and cooperative while running; the worker checks it before persisting new results.
 
 The current job graph checkpoints at the job-step boundary. An in-flight model call cannot resume from its internal progress. For that case the durable job remains failed with a safe error code and requires a new, explicitly submitted job after review.
 
 ## Operational requirements and verification limits
 
-Run `alembic upgrade head` before starting a version that includes durable workflows. The worker runs inside each FastAPI process and uses database row claims. Use one API process for the V1 local demonstration. Five-minute worker leases have no heartbeat; domain output writes are not fenced against a replaced lease, so jobs exceeding the lease and competing-worker production operation remain unsafe/unverified. PostgreSQL row claims alone do not close that gap. SQLite is suitable for local single-process development.
+Run the separate release migration job before starting a new production version. Workers renew five-minute leases every 30 seconds by default. Domain/checkpoint writes check and lock the queue row with the exact tenant, job, lease token, unexpired ownership and cancellation state before committing. Recovery cannot race that commit. Expired/replaced workers cannot save output; ambiguous in-flight provider calls fail without automatic replay. SQLite remains suitable for local development; production requires PostgreSQL.
 
-Automated tests cover idempotency, completed jobs, failure sanitization, membership revocation, tenant-scoped status/checkpoints, safe pre-start retry, process-restart recovery, queued cancellation, growth strategy jobs, and evaluation-time approval revalidation. PostgreSQL `SKIP LOCKED` concurrency, a full PostgreSQL migration chain, pgvector, and Docker startup still require verification in an environment with a dedicated PostgreSQL/pgvector test database and Docker.
+Automated tests cover existing workflows plus restricted-role PostgreSQL execution, competing claims, renewal and stale-writer rejection. See [Railway verification](RAILWAY_VERIFICATION.md) for current checks/cloud limits and [deployment steps](../RAILWAY_DEPLOYMENT.md) for health checks/logs.

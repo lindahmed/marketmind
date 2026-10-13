@@ -1,0 +1,6 @@
+{
+  "name": "marketmind-deployment",
+  "private": true,
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "devDependencies": { "railway": "3.12.0", "typescript": "^5.9.3" }
+}

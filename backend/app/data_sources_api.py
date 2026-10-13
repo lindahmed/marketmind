@@ -8,6 +8,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import CurrentUser, Db, Tenant
+from app.db import set_db_scope
 from app.intelligence.audit import record_audit
 from app.models import BusinessEvent, DataImportRun, DataSource, Membership, ReconciliationDecision, Workspace
 from app.reconciliation import record_batch
@@ -145,7 +146,8 @@ def source_imports(source_id: str, workspace: Tenant, db: Db):
                                                   DataSource.workspace_id == workspace.id))
     if source is None:
         raise HTTPException(404, "Data source not found")
-    runs = db.scalars(select(DataImportRun).where(DataImportRun.source_id == source.id)
+    runs = db.scalars(select(DataImportRun).where(DataImportRun.source_id == source.id,
+                                                DataImportRun.workspace_id == workspace.id)
                       .order_by(desc(DataImportRun.started_at), desc(DataImportRun.id)).limit(100)).all()
     return [_run_view(run) for run in runs]
 
@@ -188,10 +190,12 @@ def ingest_sheets(source_id: str, payload: DataSourceBatch, db: Db,
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.casefold() != "bearer" or not token:
         raise HTTPException(401, "Source bearer token required")
+    set_db_scope(db, source_token_hash=_hash_secret(token))
     source = db.get(DataSource, source_id)
     if (source is None or source.provider != "google_sheets" or source.status != "active"
             or not hmac.compare_digest(source.secret_hash, _hash_secret(token))):
         raise HTTPException(401, "Invalid source credentials")
+    set_db_scope(db, workspace_id=source.workspace_id)
     workspace = db.get(Workspace, source.workspace_id)
     if workspace is None:
         raise HTTPException(401, "Invalid source credentials")

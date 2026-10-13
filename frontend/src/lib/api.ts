@@ -1,4 +1,6 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Empty base uses the same-origin Next.js proxy. A public URL remains optional
+// for existing local setups; production builds require the proxy.
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }

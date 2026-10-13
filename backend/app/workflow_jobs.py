@@ -1,5 +1,6 @@
 """Database-backed queue and checkpointed LangGraph worker for tenant workflows."""
 import threading
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, TypedDict
@@ -8,9 +9,13 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select, update
 from sqlalchemy.orm import sessionmaker
 
-from app.db import SessionLocal
+from app.config import get_settings
+from app.db import SessionLocal, set_db_scope
 from app.intelligence.checkpoint_store import TenantCheckpointSaver
 from app.models import WorkflowJob
+from app.job_lease import LeaseLost, fence_session, lease_heartbeat
+
+logger = logging.getLogger("marketmind.worker")
 
 LEASE_SECONDS = 300
 POLL_SECONDS = 0.5
@@ -23,6 +28,7 @@ class JobState(TypedDict, total=False):
     requested_by_user_id: str | None
     kind: str
     payload: dict[str, Any]
+    lease_token: str
     output: dict[str, Any]
 
 
@@ -319,6 +325,7 @@ def _execute_experiment_evaluation(session, job: WorkflowJob) -> dict:
 
 def _execute_job(session_factory: sessionmaker, state: JobState) -> dict:
     with session_factory() as session:
+        fence_session(session, state["workspace_id"], state["job_id"], state.get("lease_token"))
         job = session.scalar(select(WorkflowJob).where(
             WorkflowJob.id == state["job_id"], WorkflowJob.workspace_id == state["workspace_id"],
         ))
@@ -350,7 +357,8 @@ def _compiled_job_graph(session_factory: sessionmaker):
 def _claim_job(session_factory: sessionmaker, job_id: str | None = None) -> WorkflowJob | None:
     now = _now()
     with session_factory.begin() as session:
-        query = select(WorkflowJob).where(WorkflowJob.status == "queued").order_by(
+        query = select(WorkflowJob).where(WorkflowJob.status == "queued",
+                                          WorkflowJob.cancel_requested.is_(False)).order_by(
             WorkflowJob.created_at, WorkflowJob.id,
         ).with_for_update(skip_locked=True)
         if job_id:
@@ -363,7 +371,7 @@ def _claim_job(session_factory: sessionmaker, job_id: str | None = None) -> Work
             WorkflowJob.id == job.id, WorkflowJob.workspace_id == job.workspace_id,
             WorkflowJob.status == "queued", WorkflowJob.cancel_requested.is_(False),
         ).values(status="running", attempts=WorkflowJob.attempts + 1,
-                 lease_token=token, lease_expires_at=now + timedelta(seconds=LEASE_SECONDS),
+                 lease_token=token, lease_expires_at=now + timedelta(seconds=get_settings().worker_lease_seconds),
                  current_step="claimed", started_at=now, updated_at=now))
         if claimed.rowcount != 1:
             return None
@@ -378,7 +386,6 @@ def _recover_expired(session_factory: sessionmaker) -> None:
         expired = session.scalars(select(WorkflowJob).where(
             WorkflowJob.status == "running", WorkflowJob.lease_expires_at < now,
         ).with_for_update(skip_locked=True).limit(100)).all()
-        saver = TenantCheckpointSaver(session_factory)
         for job in expired:
             if job.result is not None:
                 job.status = "completed"
@@ -393,18 +400,10 @@ def _recover_expired(session_factory: sessionmaker) -> None:
                 job.lease_token = None
                 job.lease_expires_at = None
                 continue
-            checkpoint = saver.get_tuple({"configurable": {"workspace_id": job.workspace_id,
-                                                             "thread_id": job.id, "checkpoint_ns": ""}})
-            next_nodes = tuple((checkpoint.checkpoint or {}).get("next", ())) if checkpoint else ()
-            if checkpoint and not next_nodes:
-                job.status = "completed"
-                job.result = (checkpoint.checkpoint.get("channel_values") or {}).get("output")
-                job.error_code = None
-            else:
-                # An in-flight provider/model node can have run remotely without
-                # committing a checkpoint. Do not replay it automatically.
-                job.status = "failed"
-                job.error_code = "worker_interrupted_during_step"
+            # A checkpoint without a committed domain result cannot prove that
+            # the provider node finished. Never replay uncertain paid calls.
+            job.status = "failed"
+            job.error_code = "worker_interrupted_during_step"
             job.finished_at = now
             job.current_step = None
             job.lease_token = None
@@ -418,6 +417,7 @@ def process_next_job(session_factory: sessionmaker | None = None, job_id: str | 
     if job is None:
         return None
     with session_factory.begin() as session:
+        set_db_scope(session, workspace_id=job.workspace_id)
         current = session.scalar(select(WorkflowJob).where(
             WorkflowJob.id == job.id, WorkflowJob.workspace_id == job.workspace_id,
             WorkflowJob.status == "running", WorkflowJob.lease_token == job.lease_token,
@@ -432,13 +432,17 @@ def process_next_job(session_factory: sessionmaker | None = None, job_id: str | 
             return job_view(current)
         current.current_step = "workflow"
         current.updated_at = _now()
-    config = {"configurable": {"thread_id": job.id, "workspace_id": job.workspace_id, "checkpoint_ns": ""}}
+    config = {"configurable": {"thread_id": job.id, "workspace_id": job.workspace_id,
+                                "checkpoint_ns": "", "lease_token": job.lease_token}}
     initial: JobState = {"job_id": job.id, "workspace_id": job.workspace_id,
                          "requested_by_user_id": job.requested_by_user_id,
-                         "kind": job.kind, "payload": job.payload}
+                         "kind": job.kind, "payload": job.payload, "lease_token": job.lease_token}
     try:
-        output_state = _compiled_job_graph(session_factory).invoke(initial, config=config)
+        logger.info("job_started workspace_id=%s job_id=%s kind=%s", job.workspace_id, job.id, job.kind)
+        with lease_heartbeat(session_factory, job.workspace_id, job.id, job.lease_token):
+            output_state = _compiled_job_graph(session_factory).invoke(initial, config=config)
         with session_factory.begin() as session:
+            set_db_scope(session, workspace_id=job.workspace_id)
             completed = session.scalar(select(WorkflowJob).where(
                 WorkflowJob.id == job.id, WorkflowJob.workspace_id == job.workspace_id,
                 WorkflowJob.status == "running", WorkflowJob.lease_token == job.lease_token,
@@ -453,23 +457,31 @@ def process_next_job(session_factory: sessionmaker | None = None, job_id: str | 
                 completed.lease_token = None
                 completed.lease_expires_at = None
                 return job_view(completed)
-    except WorkflowJobError as error:
+    except (WorkflowJobError, LeaseLost) as error:
         with session_factory.begin() as session:
+            set_db_scope(session, workspace_id=job.workspace_id)
             failed = session.scalar(select(WorkflowJob).where(
                 WorkflowJob.id == job.id, WorkflowJob.workspace_id == job.workspace_id,
                 WorkflowJob.status == "running", WorkflowJob.lease_token == job.lease_token,
             ))
             if failed is not None:
-                failed.status = "cancelled" if error.code == "cancelled" else "failed"
-                failed.error_code = None if error.code == "cancelled" else error.code
+                code = error.code if isinstance(error, WorkflowJobError) else "worker_lease_lost"
+                if failed.result is not None:
+                    failed.status = "completed"
+                    failed.error_code = None
+                else:
+                    failed.status = "cancelled" if code == "cancelled" or failed.cancel_requested else "failed"
+                    failed.error_code = None if failed.status == "cancelled" else code
                 failed.current_step = None
                 failed.finished_at = _now()
                 failed.updated_at = _now()
                 failed.lease_token = None
                 failed.lease_expires_at = None
                 return job_view(failed)
-    except Exception:
+    except Exception as error:
+        logger.error("job_step_failed job_id=%s error_type=%s", job.id, type(error).__name__)
         with session_factory.begin() as session:
+            set_db_scope(session, workspace_id=job.workspace_id)
             failed = session.scalar(select(WorkflowJob).where(
                 WorkflowJob.id == job.id, WorkflowJob.workspace_id == job.workspace_id,
                 WorkflowJob.status == "running", WorkflowJob.lease_token == job.lease_token,
@@ -490,20 +502,24 @@ def process_next_job(session_factory: sessionmaker | None = None, job_id: str | 
     return None
 
 
-def _worker_loop(stop: threading.Event) -> None:
-    factory = _session_factory()
+def _worker_loop(stop: threading.Event, factory: sessionmaker | None = None) -> None:
+    factory = factory or _session_factory()
     while not stop.is_set():
         try:
             result = process_next_job(factory)
             if result is None:
-                stop.wait(POLL_SECONDS)
-        except Exception:
+                stop.wait(get_settings().worker_poll_seconds)
+            else:
+                logger.info("job_finished job_id=%s status=%s error_code=%s",
+                            result["id"], result["status"], result["error_code"])
+        except Exception as error:
             # A transient polling/session error must not terminate the worker.
-            stop.wait(POLL_SECONDS)
+            logger.warning("worker_poll_failed error_type=%s", type(error).__name__)
+            stop.wait(5)
 
 
 def start_worker(app) -> Callable[[], None]:
-    if getattr(app.state, "disable_workflow_worker", False):
+    if not get_settings().workflow_worker_enabled or getattr(app.state, "disable_workflow_worker", False):
         return lambda: None
     existing = getattr(app.state, "workflow_worker_stop", None)
     if existing:

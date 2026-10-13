@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata, CheckpointTuple
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import WorkflowCheckpoint, WorkflowCheckpointWrite, WorkflowJob
+from app.db import set_db_scope
+from app.job_lease import fence_session
 
 
 def _scope(config: dict | None) -> tuple[str, str, str] | None:
@@ -31,6 +33,7 @@ class TenantCheckpointSaver(BaseCheckpointSaver):
         self.session_factory = session_factory
 
     def _valid_job(self, session, workspace_id: str, thread_id: str) -> bool:
+        set_db_scope(session, workspace_id=workspace_id)
         job = session.scalar(select(WorkflowJob.id).where(
             WorkflowJob.id == thread_id, WorkflowJob.workspace_id == workspace_id,
         ))
@@ -44,6 +47,7 @@ class TenantCheckpointSaver(BaseCheckpointSaver):
         checkpoint_id = checkpoint["id"]
         parent_id = config.get("configurable", {}).get("checkpoint_id")
         with self.session_factory.begin() as session:
+            fence_session(session, workspace_id, thread_id, config.get("configurable", {}).get("lease_token"))
             if not self._valid_job(session, workspace_id, thread_id):
                 raise PermissionError("Checkpoint job does not belong to this workspace")
             row = session.scalar(select(WorkflowCheckpoint).where(
@@ -73,6 +77,7 @@ class TenantCheckpointSaver(BaseCheckpointSaver):
         if not checkpoint_id:
             raise ValueError("Checkpoint ID is required for pending writes")
         with self.session_factory.begin() as session:
+            fence_session(session, workspace_id, thread_id, config.get("configurable", {}).get("lease_token"))
             if not self._valid_job(session, workspace_id, thread_id):
                 raise PermissionError("Checkpoint does not belong to this workspace")
             for index, (channel, value) in enumerate(writes):
@@ -171,14 +176,6 @@ class TenantCheckpointSaver(BaseCheckpointSaver):
             return iter(tuples)
 
     def delete_thread(self, thread_id: str) -> None:
-        with self.session_factory.begin() as session:
-            job = session.get(WorkflowJob, thread_id)
-            if job is not None:
-                session.execute(delete(WorkflowCheckpointWrite).where(
-                    WorkflowCheckpointWrite.workspace_id == job.workspace_id,
-                    WorkflowCheckpointWrite.job_id == thread_id,
-                ))
-                session.execute(delete(WorkflowCheckpoint).where(
-                    WorkflowCheckpoint.workspace_id == job.workspace_id,
-                    WorkflowCheckpoint.job_id == thread_id,
-                ))
+        # LangGraph's generic API supplies no workspace or authorization here.
+        # Deleting checkpoints by an unscoped caller is deliberately forbidden.
+        raise PermissionError("Workspace-scoped checkpoint deletion is required")
