@@ -8,4 +8,4 @@ The output follows a strict schema, has bounded response tokens and a configurab
 
 Audit events record document uploads/deletions, embedding failures, workspace searches and investigation attempts. Search terms and investigation questions are represented by server-keyed HMAC digests in audit metadata; document and model output text is not copied into the audit table.
 
-This is synchronous request processing; durable jobs, LangGraph checkpoints, retry policy and per workspace cost budgets remain future Milestone 2 work. A model generated analysis is evidence based but is not a verified causal claim.
+The frontend runs investigations through durable background jobs and tenant-scoped LangGraph checkpoints; the original synchronous API remains available. Recovery avoids automatic replay of interrupted model calls; see [workflow operations](DURABLE_WORKFLOWS.md). Per-workspace provider cost budgets are not implemented. A model generated analysis is evidence based but is not a verified causal claim.

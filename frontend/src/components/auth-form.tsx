@@ -31,7 +31,7 @@ export function AuthForm({ onAuthenticated }: { onAuthenticated: () => Promise<v
           <span>Private workspace</span><span>Industry context</span><span>Profit first</span>
         </div>
       </div>
-      <p className="text-xs text-[#b8cbce]">MarketMind AI · Foundation preview</p>
+      <p className="text-xs text-[#b8cbce]">MarketMind AI · V1 local demo · simulations only</p>
     </section>
     <section className="flex items-center justify-center p-8">
       <div className="w-full max-w-md">

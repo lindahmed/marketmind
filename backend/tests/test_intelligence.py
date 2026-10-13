@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+import json
+
 import pytest
 from sqlalchemy.dialects import postgresql
 
@@ -8,7 +11,6 @@ from app.intelligence.workflow import ANALYSIS_STAGES, build_analysis_graph
 from app.intelligence.context import verified_business_context
 from app.intelligence.investigation import AnalysisOutput, InvestigationAgent, InvestigationError
 from app.intelligence.investigation import OpenAIInvestigationProvider
-import json
 from app.integrations.n8n import N8nExecutor
 
 
@@ -63,10 +65,12 @@ def test_execution_cannot_dispatch_without_approval(monkeypatch):
     def forbidden_network(*args, **kwargs):
         pytest.fail("Webhook must not be called without approval")
 
-    monkeypatch.setattr("urllib.request.urlopen", forbidden_network)
-    executor = N8nExecutor("https://automation.example/webhook", "test-token", DenyApproval())
+    monkeypatch.setattr("app.integrations.n8n.urllib.request.build_opener", forbidden_network)
+    executor = N8nExecutor("https://marketmind.app.n8n.cloud/webhook/marketmind-experiment", "test-token", DenyApproval())
     with pytest.raises(PermissionError):
-        executor.execute(context(), "experiment-a", "forged-approval")
+        executor.execute(context(), "experiment-a", "forged-approval", 1, "execution-a",
+                         "simulation_only", {"scenario": "conversion_lift"}, "tenant-a:experiment-a:v1",
+                         datetime.now(timezone.utc))
 
 
 def test_verified_context_requires_persisted_membership():

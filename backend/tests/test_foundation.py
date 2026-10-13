@@ -64,7 +64,7 @@ def test_profit_findings_and_idempotent_import(clients):
     assert upload(client, ECOMMERCE).status_code == 200
     overview = client.get("/api/dashboard").json()
     assert overview["kpis"]["estimated_profit"] == -20
-    assert overview["kpis"]["roas"] == 1.25
+    assert overview["kpis"]["unattributed_revenue_ad_spend_ratio"] == 1.25
     assert overview["kpis"]["average_order_value"] == 20
     assert overview["findings"][0]["code"] == "negative_profit"
     assert upload(client, ECOMMERCE.replace(",100,", ",200,")).status_code == 200

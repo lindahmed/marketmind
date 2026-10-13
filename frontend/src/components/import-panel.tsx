@@ -22,11 +22,14 @@ export function ImportPanel({ industry, workspaceId, onImported }: { industry: I
     } catch (error) { setError(error instanceof Error ? error.message : "Import failed"); }
     finally { setBusy(false); }
   }
-  const example = industry.code === "ecommerce" ? "2026-01-01,1200,20,200,500" : "2026-01-01,1200,20,18,200,400";
-  const template = `${industry.csv_columns.join(",")}\n${example}\n`;
+  const example = industry.code === "ecommerce"
+    ? "2026-01-01,1200.00,45.00,20,16,2,1,200.00,500.00,60.00,40.00,20.00,250.00"
+    : "2026-01-01,1200.00,30.00,20,16,2,200.00,400.00,15.00,250.00";
+  const template = `${industry.detailed_csv_columns.join(",")}\n${example}\n`;
   return <section className="card max-w-3xl">
     <h2 className="text-xl font-semibold">Bring your daily data</h2>
-    <p className="muted mt-3 text-sm leading-relaxed">Upload daily totals for your {industry.name.toLowerCase()} business. Use one row per date, ISO dates (YYYY-MM-DD), and nonnegative numbers in your workspace currency. All columns are required.</p>
+    <p className="muted mt-3 text-sm leading-relaxed">Upload daily totals for your {industry.name.toLowerCase()} business. Use one row per date, ISO dates (YYYY-MM-DD), and nonnegative amounts in your workspace currency. This detailed template records refunds, variable and fixed costs, and order or appointment outcomes. Allocate fixed costs across dates once; do not repeat a monthly amount on every daily row. Earlier CSV templates are also accepted.</p>
+    <p className="muted mt-2 text-sm">{industry.code === "ecommerce" ? "Outcomes refer to the same order cohort as total orders. Fulfilled and cancelled orders are exclusive. Delayed orders may also be fulfilled, but cannot be cancelled." : "Completed and cancelled appointments are exclusive outcomes of the same booking cohort."}</p>
     <div className="my-6 overflow-x-auto rounded-lg bg-[#f4f7f7] p-4"><pre className="text-xs leading-6">{template}</pre></div>
     <a className="text-sm font-semibold text-[#087f69]" href={`data:text/csv;charset=utf-8,${encodeURIComponent(template)}`} download={`${industry.code}-template.csv`}>Download example CSV ↓</a>
     <form onSubmit={submit} className="mt-6 grid gap-5 border-t border-[#dfe7e7] pt-6">

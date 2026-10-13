@@ -10,21 +10,17 @@
 - `INVESTIGATION_PROVIDER=openai` opts in to external processing using `OPENAI_API_KEY` and `INVESTIGATION_MODEL`. The evidence screen discloses enabled external processing. Each request has bounded evidence and output, a timeout, no stored provider response, and tenant-only context.
 - The dashboard links to the document library, evidence search and saved investigation review.
 - Document uploads/deletions, embedding failures, workspace searches, and investigation attempts are recorded in a workspace-keyed audit table. Query and question text use a server-keyed HMAC digest in audit metadata. Investigation costs use a dated text-token price schedule; the amount remains an estimate and cached input is counted separately.
+- Detailed and legacy CSV imports support inclusive reporting periods, calendar gap disclosures, refunds, reported variable costs, and validated order/appointment outcomes. The dashboard shows contribution profit estimates and missing-data warnings. See [financial definitions](FINANCIAL_REPORTING.md).
 
 ## Still in progress
 
 - Evaluate a PostgreSQL HNSW index only after testing its recall under tenant and model filters on real pgvector. Current hybrid search uses exact vector retrieval plus BM25 and rank fusion.
 - Introduce persistent jobs, worker authorization checks and tenant-bound LangGraph checkpoints before doing slow provider calls.
 - Define evidence retention and deletion effects for existing investigation snapshots.
-- Add revenue periods, refunds, fixed costs, attribution and industry-specific measurement before extending cause analysis.
+- Add fixed costs, attribution, reconciliation with source systems, and independently validated industry measurements before expanding causal claims.
 
 Search scores describe retrieval relevance from lexical matching and, when configured, semantic similarity. Findings marked `industry_rule` are deterministic checks. A high score or rule is not a model confidence value or causal explanation.
 
 ## Local checks
 
-- **36 backend tests passed; 2 PostgreSQL/vector tests skipped** because local pgvector is not installed.
-- Ruff passed.
-- The Alembic forward migration and schema check passed on a new isolated SQLite database.
-- Frontend type checking and the production build passed.
-- Headless Edge on temporary port 3001 verified private upload, search, source linked investigation, saved history, cross-tenant run denial, and a clean browser console. The requested preview on port 3000 remains stopped.
-- Docker and real PostgreSQL/pgvector execution remain configured for CI and are not verified locally.
+See [current verification results](VERIFICATION.md) for test totals, financial migration checks, CORS deletion coverage, and outstanding pgvector/Docker verification. Earlier browser checks covered private upload, search, saved investigation history, and tenant denial; they were not rerun for this financial review.
